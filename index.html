@@ -1,0 +1,871 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Zevenheuvelenloop — Training Plan</title>
+<style>html,body{margin:0;padding:0;background:#ECEFE9;}</style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom": "https://esm.sh/react-dom@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+    "recharts": "https://esm.sh/recharts@2.12.7?external=react,react-dom",
+    "lucide-react": "https://esm.sh/lucide-react@0.383.0?external=react",
+    "fit-file-parser": "https://esm.sh/fit-file-parser@1"
+  }
+}
+</script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-type="module" data-presets="react">
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  Mountain, Flag, Timer, Gauge, Activity, Utensils, Map as MapIcon,
+  Plus, Trash2, Check, ChevronDown, Wine, Footprints, Calendar, Upload
+} from "lucide-react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ReferenceLine, AreaChart, Area
+} from "recharts";
+import { createRoot } from "react-dom/client";
+import FitParser from "fit-file-parser";
+
+/* ---------------- constants ---------------- */
+const RACE = new Date("2026-11-15T13:00:00+01:00"); // Sun 15 Nov 2026, 13:00 CET, Nijmegen
+const PLAN_START = new Date("2026-06-22T00:00:00+02:00"); // Mon, week 1
+const GOAL_PACE = 360; // 6:00 / km in seconds
+const RACE_KM = 15.08; // measured from the GPS trace
+const GOAL_KM = 15;    // nominal race distance, used for pacing math
+const SEED_RUN = { id: 20260618, date: "2026-06-18", type: "Long", distance: 10.52, time: 4328, feel: 4, notes: "First-ever 10k — a test of the distance, casual jog, not chasing pace. Bad sleep on a hot night, started late in full sun, a bit under-fuelled. Still finished comfortably, not out of breath, ~5 km left in the tank." };
+
+/* course outline traced from the uploaded GPX (15.08 km), normalised 0..95 x 0..100 */
+const COURSE = [[0,0.02],[0.03,0.03],[1.6,1.8],[3.76,3.59],[4.68,4.4],[5.46,5.24],[6.14,6.38],[6.57,7.23],[8.91,12.86],[11.03,17.35],[14.51,24.76],[14.56,24.95],[15.65,27.05],[18.03,30.94],[18.83,31.92],[19.38,32.74],[19.8,33.53],[19.95,34.33],[20.21,37.26],[20.46,39.81],[20.74,41.18],[20.87,41.84],[21.01,42.51],[21.09,42.88],[21.38,44],[21.67,45.51],[21.95,46.47],[22.17,47.41],[22.39,48.23],[22.66,49.43],[23.98,52.93],[24.9,54.37],[28.6,59.05],[28.96,59.43],[29.02,59.85],[29.22,60.15],[29.49,60.17],[29.72,60.54],[47.63,83.75],[53.81,91.72],[57.92,97.02],[58.52,97.34],[59.29,97.4],[70.49,98.63],[74.47,99.12],[77.71,99.31],[93.78,99.96],[94.2,100],[94.22,99.77],[94.04,96.78],[93.82,95.43],[92.53,89.88],[92.33,89.12],[91.72,86.48],[90.95,83.19],[90.81,82.63],[90.69,82.11],[88.44,72.67],[85.07,58.63],[83.98,53.86],[83.75,53.19],[83.63,53.02],[83.28,52.94],[82.12,53.7],[81.43,53.89],[78.56,54.26],[77.74,54.43],[76.94,54.57],[75.78,54.9],[69.77,57.55],[67.93,57.72],[65.09,56.64],[65.02,56.26],[64.63,50.29],[64.59,49.9],[64.55,49.39],[64.06,43.01],[64,42.31],[63.9,40.95],[63.76,39.06],[63.64,37.41],[63.6,36.85],[63.57,36.47],[63.55,36.1],[63.49,35.77],[63.98,35.42],[65.21,34.49],[66.97,33.2],[67.62,32.45],[69.34,31.29],[69.4,31.19],[69.21,30.88],[69.18,30.75],[68.38,29.79],[67.49,29.08],[66.89,28.72],[61.25,26.76],[59.23,26.06],[58.17,25.72],[56.9,25.09],[55.11,24],[54.76,24.13],[54.34,24.35],[53.74,24.28],[52.15,24.18],[50.42,23.93],[45.62,22.42],[40.75,20.74],[40.65,20.54],[40.5,20.43],[40.23,20.5],[40.11,20.57],[38.4,20.26],[34.38,19.43],[32.95,19.13],[28.98,18.15],[26.33,17.23],[23.46,16.09],[22.92,15.79],[22.11,15.94],[20.38,16.12],[16.04,16.16],[15.79,15.9],[15.22,15.47],[11.62,13.15],[10.37,12.17],[8.59,10.31],[8.18,9.78],[7.79,9.59],[7.5,9.09],[6.53,6.86],[6.2,6.04],[5.66,5.09],[4.61,4],[3.32,2.84],[1.57,1.5],[1.32,1.4],[0.55,0.53],[0.08,0]];
+
+/* ---------------- training paces (anchored to the 6:00 goal + current fitness) ---------------- */
+const PACES = [
+  { key: "easy",   label: "Easy / long",   range: "6:45 – 7:15", color: "var(--pine)", note: "Conversational — you could talk the whole way. Most of your running lives here." },
+  { key: "steady", label: "Steady",        range: "6:20 – 6:35", color: "var(--sky)",  note: "Comfortably working and controlled." },
+  { key: "tempo",  label: "Threshold",     range: "5:55 – 6:10", color: "var(--sky)",  note: "Comfortably hard — right around race effort." },
+  { key: "reps",   label: "Intervals",     range: "5:20 – 5:40", color: "var(--warn)", note: "Short and fast with jog recoveries. Builds your top end." },
+  { key: "goal",   label: "Race goal",     range: "6:00",        color: "var(--clay)", note: "Your 15k race pace — a 1:30:00 finish. This is what race day is built around." },
+];
+
+/* ---------------- plan generator ---------------- */
+const LONG = [8,9,10,8,10, 11,12,9,12,13,14,11, 13,15,12,15,16,14, 12,8, RACE_KM];
+
+function phaseOf(w) {
+  if (w <= 5) return "Base";
+  if (w <= 12) return "Build";
+  if (w <= 18) return "Sharpen";
+  return "Taper";
+}
+
+function qualityOf(w) {
+  const Q = {
+    1:  ["Easy + strides", "5 km easy, then 4 × 20 s strides. Settle into form, no watch pressure."],
+    2:  ["Easy + strides", "6 km easy + 5 × 20 s strides. Relaxed and smooth."],
+    3:  ["Easy + strides", "6 km easy + 6 × 20 s strides."],
+    4:  ["Easy recovery",  "5 km very easy. Down week — let the body absorb the work."],
+    5:  ["Steady finish",  "6 km easy, last 2 km at steady (6:20–6:35)."],
+    6:  ["Tempo",          "2 km easy, 2 × 6 min @ 6:00 (2 min jog between), 1 km easy."],
+    7:  ["Hill reps",      "Find a 60–90 s climb. 6 × 45 s uphill strong / jog down. Course is hilly — start banking strength."],
+    8:  ["Easy + strides", "5 km easy + 5 × 20 s strides. Down week."],
+    9:  ["Tempo",          "2 × 8 min @ 5:55–6:05 (2 min jog). Hold form when it bites."],
+    10: ["Intervals",      "5 × 3 min @ 5:25 with 2 min jog. First real speed."],
+    11: ["Hill reps",      "8 × 45 s uphill strong / jog down, then 5 min steady."],
+    12: ["Easy + strides", "6 km easy + 6 × 20 s strides. Down week before the sharp block."],
+    13: ["Tempo",          "3 × 8 min @ 6:00 (90 s jog). Threshold confidence."],
+    14: ["Goal-pace reps", "6 × 1 km @ 6:00 with 90 s jog. Feel exactly how race pace sits."],
+    15: ["Easy + strides", "6 km easy + 6 strides. Down week."],
+    16: ["Race-pace blocks","3 × 2 km @ 6:00 (2 min jog). Rehearse holding it."],
+    17: ["Tempo",          "25–30 min continuous @ 6:05. Long, controlled, strong."],
+    18: ["Race-pace tune", "Easy run with 4 km @ 6:00 in the middle. Sharpen, don't drain."],
+    19: ["Sharpener",      "4 × 800 m @ 5:50 with 90 s jog. Quick legs, low volume."],
+    20: ["Pre-race touch", "Easy run + 3 × 1 min @ goal pace. Stay sharp, stay fresh."],
+    21: ["Shakeout",       "Thu: 25 min very easy + 4 strides. Then rest into Sunday."],
+  };
+  return Q[w];
+}
+
+function buildWeeks() {
+  const out = [];
+  for (let w = 1; w <= 21; w++) {
+    const mon = new Date(PLAN_START.getTime() + (w - 1) * 7 * 86400000);
+    const sun = new Date(mon.getTime() + 6 * 86400000);
+    const km = LONG[w - 1];
+    const [qTitle, qDetail] = qualityOf(w);
+    const isRace = w === 21;
+    const longSession = isRace
+      ? { tag: "Race", title: "Zevenheuvelenloop — 15 km", detail: "Sunday 13:00, Nijmegen. Goal 1:30:00 (6:00/km). Run the climbs by effort, take back time on the descents.", day: "Sun" }
+      : { tag: "Long", title: `Long run — ${km} km`, detail: longRunNote(w, km), day: "Sat / Sun" };
+    out.push({
+      w, mon, sun,
+      phase: phaseOf(w),
+      focus: focusOf(w),
+      sessions: [
+        { tag: "Quality", title: qTitle, detail: qDetail, day: "Thu" },
+        longSession,
+      ],
+    });
+  }
+  return out;
+}
+
+function longRunNote(w, km) {
+  if (w >= 16 && w <= 18) return `${km} km easy with the last 3 km at steady. Time on feet is the point.`;
+  if (w === 14) return `${km} km easy — your first run at race distance. Keep it relaxed.`;
+  if (w >= 19) return `${km} km easy. Volume coming down so you arrive fresh.`;
+  return `${km} km at easy pace (6:45–7:15). Build the engine.`;
+}
+
+function focusOf(w) {
+  const p = phaseOf(w);
+  if (p === "Base") return "Build the aerobic base. Consistency beats intensity right now.";
+  if (p === "Build") return "Add tempo, speed and hills. The course rewards strong legs.";
+  if (p === "Sharpen") return "Lock in race pace and reach race distance.";
+  return "Trust the work. Freshen the legs for 15 November.";
+}
+
+const WEEKS = buildWeeks();
+const TOTAL_SESSIONS = WEEKS.reduce((n, wk) => n + wk.sessions.length, 0);
+
+/* ---------------- helpers ---------------- */
+const pad = (n) => String(n).padStart(2, "0");
+function secToPace(s) { if (!s || !isFinite(s)) return "—"; const m = Math.floor(s / 60); return `${m}:${pad(Math.round(s % 60))}`; }
+function secToClock(s) { if (!s || !isFinite(s)) return "—"; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = Math.round(s % 60); return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`; }
+function parseTime(str) {
+  if (!str) return 0;
+  const parts = str.split(":").map((x) => parseInt(x, 10));
+  if (parts.some(isNaN)) return 0;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return parts[0];
+}
+function fmtRange(a, b) {
+  const opt = { day: "numeric", month: "short" };
+  return `${a.toLocaleDateString("en-GB", opt)} – ${b.toLocaleDateString("en-GB", opt)}`;
+}
+
+const TYPE_COLOR = {
+  Quality: "var(--sky)", Long: "var(--pine)", Race: "var(--clay)",
+  Easy: "var(--pine)", Tempo: "var(--sky)", Intervals: "var(--warn)",
+  Hills: "var(--clay)", "Goal pace": "var(--clay)", Social: "var(--ink-soft)",
+};
+
+/* ---------------- storage ---------------- */
+function loadKey(key, def) {
+  try { const v = localStorage.getItem(key); return v == null ? def : JSON.parse(v); }
+  catch { return def; }
+}
+function saveKey(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {}
+}
+
+/* ================================================================= */
+export default function App() {
+  const [tab, setTab] = useState("overview");
+  const [runs, setRuns] = useState([]);
+  const [checkins, setCheckins] = useState([]);
+  const [done, setDone] = useState({});
+  const [loaded, setLoaded] = useState(false);
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    (async () => {
+      const seeded = await loadKey("zhl:seeded", false);
+      let r0 = await loadKey("zhl:runs", []);
+      if (!seeded && r0.length === 0) { r0 = [SEED_RUN]; await saveKey("zhl:runs", r0); await saveKey("zhl:seeded", true); }
+      setRuns(r0);
+      setCheckins(await loadKey("zhl:checkins", []));
+      const dseeded = await loadKey("zhl:done_seeded", false);
+      let d0 = await loadKey("zhl:done", {});
+      if (!dseeded && d0["1-1"] === undefined) { d0 = { ...d0, "1-1": true }; await saveKey("zhl:done", d0); await saveKey("zhl:done_seeded", true); }
+      setDone(d0);
+      setLoaded(true);
+    })();
+    const t = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(t);
+  }, []);
+
+  const daysLeft = Math.max(0, Math.ceil((RACE - now) / 86400000));
+  const progress = Math.min(1, Math.max(0, (now - PLAN_START) / (RACE - PLAN_START)));
+  const currentWeek = Math.min(21, Math.max(1, Math.floor((now - PLAN_START) / (7 * 86400000)) + 1));
+  const doneCount = Object.values(done).filter(Boolean).length;
+
+  const css = `
+    @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
+    :root{
+      --ink:#14233B; --ink-soft:#51617C; --paper:#ECEFE9; --panel:#FBFCFA;
+      --panel-2:#E4E8E0; --line:#CBD2C8; --clay:#C2571E; --pine:#2E6A4E;
+      --sky:#2F6F86; --warn:#B23A2E;
+    }
+    .zhl{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);background:var(--paper);}
+    .zhl *{box-sizing:border-box;}
+    .mono{font-family:'Space Mono','SF Mono',ui-monospace,monospace;}
+    .eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;font-weight:700;color:var(--ink-soft);}
+    .zhl button:focus-visible{outline:2px solid var(--clay);outline-offset:2px;}
+    .zhl input:focus-visible,.zhl select:focus-visible,.zhl textarea:focus-visible{outline:2px solid var(--sky);outline-offset:1px;}
+    @media (prefers-reduced-motion: reduce){.zhl *{transition:none!important;animation:none!important;}}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;}
+    .field{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:14px;width:100%;font-family:inherit;color:var(--ink);}
+    .recharts-cartesian-axis-tick text{font-family:'Space Mono',monospace;font-size:11px;fill:var(--ink-soft);}
+  `;
+
+  const TABS = [
+    ["overview", "Overview", Mountain],
+    ["plan", "21-week plan", Calendar],
+    ["paces", "Paces", Gauge],
+    ["log", "Run log", Activity],
+    ["fuel", "Fuel & recovery", Utensils],
+    ["course", "The course", MapIcon],
+  ];
+
+  return (
+    <div className="zhl" style={{ minHeight: "100vh" }}>
+      <style>{css}</style>
+
+      {/* header */}
+      <header style={{ background: "var(--ink)", color: "#fff", padding: "22px 20px 30px" }}>
+        <div style={{ maxWidth: 920, margin: "0 auto" }}>
+          <div className="eyebrow" style={{ color: "#9fb0c9" }}>Garmin Zevenheuvelenloop · Nijmegen</div>
+          <h1 style={{ margin: "8px 0 0", fontSize: 30, fontWeight: 800, lineHeight: 1.05, letterSpacing: "-0.01em" }}>
+            Seven Hills, one pace: <span style={{ color: "#E6A06b" }}>6:00</span>
+          </h1>
+          <p style={{ margin: "10px 0 0", color: "#c4cedd", fontSize: 14, maxWidth: 560 }}>
+            15 km · target finish <span className="mono" style={{ color: "#fff" }}>1:30:00</span> at <span className="mono">6:00</span>/km · Sunday 15 November 2026, 13:00.
+            Drop a Strava <span className="mono">.fit</span> file after each run and I'll keep tuning it.
+          </p>
+          <ContourStrip />
+        </div>
+      </header>
+
+      {/* tabs */}
+      <nav style={{ background: "var(--panel)", borderBottom: "1px solid var(--line)", position: "sticky", top: 0, zIndex: 5 }}>
+        <div style={{ maxWidth: 920, margin: "0 auto", display: "flex", gap: 2, overflowX: "auto", padding: "0 10px" }}>
+          {TABS.map(([id, label, Icon]) => (
+            <button key={id} onClick={() => setTab(id)}
+              style={{
+                display: "flex", alignItems: "center", gap: 7, whiteSpace: "nowrap",
+                padding: "13px 14px", border: "none", background: "none", cursor: "pointer",
+                fontFamily: "inherit", fontSize: 14, fontWeight: 600,
+                color: tab === id ? "var(--ink)" : "var(--ink-soft)",
+                borderBottom: tab === id ? "2px solid var(--clay)" : "2px solid transparent",
+              }}>
+              <Icon size={16} /> {label}
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      <main style={{ maxWidth: 920, margin: "0 auto", padding: "22px 16px 70px" }}>
+        {tab === "overview" && (
+          <Overview daysLeft={daysLeft} progress={progress} currentWeek={currentWeek}
+            runs={runs} doneCount={doneCount} loaded={loaded} setTab={setTab} />
+        )}
+        {tab === "plan" && <PlanView done={done} setDone={setDone} currentWeek={currentWeek} />}
+        {tab === "paces" && <PaceView />}
+        {tab === "log" && <LogView runs={runs} setRuns={setRuns} loaded={loaded} />}
+        {tab === "fuel" && <FuelView checkins={checkins} setCheckins={setCheckins} loaded={loaded} />}
+        {tab === "course" && <CourseView />}
+      </main>
+    </div>
+  );
+}
+
+/* ---------------- contour decoration ---------------- */
+function ContourStrip() {
+  return (
+    <svg viewBox="0 0 560 44" style={{ width: "100%", height: 30, marginTop: 16, display: "block" }} aria-hidden="true">
+      {[0, 8, 16, 24].map((o, i) => (
+        <path key={i} fill="none" stroke="#33476a" strokeWidth="1" opacity={0.7 - i * 0.13}
+          d={`M0 ${30 - o} C 90 ${10 - o}, 180 ${44 - o}, 280 ${24 - o} S 470 ${6 - o}, 560 ${26 - o}`} />
+      ))}
+    </svg>
+  );
+}
+
+/* ---------------- overview ---------------- */
+function Overview({ daysLeft, progress, currentWeek, runs, doneCount, loaded, setTab }) {
+  const week = WEEKS[currentWeek - 1];
+  const logged = runs.filter((r) => r.distance > 0 && r.time > 0);
+  const longest = logged.reduce((m, r) => Math.max(m, r.distance), 0);
+  const recent = [...logged].slice(-3);
+  const avgRecent = recent.length ? recent.reduce((s, r) => s + r.time / r.distance, 0) / recent.length : 0;
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      {/* countdown + goal */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12 }}>
+        <Stat label="Days to race" value={daysLeft} mono accent />
+        <Stat label="Training week" value={`${currentWeek} / 21`} mono sub={week.phase} />
+        <Stat label="Sessions ticked" value={`${doneCount} / ${TOTAL_SESSIONS}`} mono />
+        <Stat label="Longest run logged" value={longest ? `${longest.toFixed(1)} km` : "—"} mono />
+      </div>
+
+      {/* the climb */}
+      <div className="card" style={{ padding: "18px 18px 6px" }}>
+        <div className="eyebrow">The climb · {Math.round(progress * 100)}% to the start line</div>
+        <ClimbViz progress={progress} />
+      </div>
+
+      {/* this week */}
+      <div className="card" style={{ padding: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+          <div>
+            <div className="eyebrow">This week · {fmtRange(week.mon, week.sun)}</div>
+            <h2 style={{ margin: "6px 0 0", fontSize: 20, fontWeight: 700 }}>Week {week.w} — {week.phase}</h2>
+          </div>
+          <button onClick={() => setTab("plan")} style={linkBtn}>See full plan →</button>
+        </div>
+        <p style={{ color: "var(--ink-soft)", fontSize: 14, margin: "8px 0 14px" }}>{week.focus}</p>
+        <div style={{ display: "grid", gap: 10 }}>
+          {week.sessions.map((s, i) => <SessionRow key={i} s={s} />)}
+        </div>
+        <p style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 14, lineHeight: 1.5 }}>
+          Your two focused runs work best 2–3 days apart — slot them into your Thursday/Friday mornings or a weekend. Easy runs with your
+          girlfriend are bonus mileage on top; they keep you moving but don't replace these two.
+        </p>
+      </div>
+
+      {/* recent form */}
+      <div className="card" style={{ padding: 18 }}>
+        <div className="eyebrow">Recent form</div>
+        {!loaded ? (
+          <p style={{ color: "var(--ink-soft)", fontSize: 14, marginTop: 10 }}>Loading your log…</p>
+        ) : logged.length === 0 ? (
+          <p style={{ color: "var(--ink-soft)", fontSize: 14, marginTop: 10, lineHeight: 1.5 }}>
+            No runs logged yet. After your next run, paste the Strava <span className="mono">.fit</span> file into the chat — I'll read the splits
+            and add it here, or you can enter it yourself under <button onClick={() => setTab("log")} style={inlineLink}>Run log</button>.
+          </p>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: 22, marginTop: 12, flexWrap: "wrap" }}>
+            <div>
+              <div className="mono" style={{ fontSize: 26, fontWeight: 700 }}>{secToPace(avgRecent)}</div>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>avg pace, last {recent.length} run{recent.length > 1 ? "s" : ""}</div>
+            </div>
+            <div style={{ height: 34, width: 1, background: "var(--line)" }} />
+            <div style={{ fontSize: 13.5, color: "var(--ink-soft)", lineHeight: 1.5 }}>
+              {avgRecent <= GOAL_PACE
+                ? "Already at or under goal pace on recent runs — strong place to be."
+                : `About ${secToPace(avgRecent - GOAL_PACE)} / km off goal pace. Plenty of weeks to close the gap.`}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, sub, mono, accent }) {
+  return (
+    <div className="card" style={{ padding: "14px 16px", background: accent ? "var(--clay)" : "var(--panel)", borderColor: accent ? "var(--clay)" : "var(--line)" }}>
+      <div className="eyebrow" style={{ color: accent ? "#fbe3d3" : "var(--ink-soft)" }}>{label}</div>
+      <div className={mono ? "mono" : ""} style={{ fontSize: 27, fontWeight: 700, marginTop: 4, color: accent ? "#fff" : "var(--ink)" }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: accent ? "#fbe3d3" : "var(--ink-soft)", marginTop: 1 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function ClimbViz({ progress }) {
+  const W = 640, H = 150, pad = 6;
+  const terrain = (t) => {
+    const bump = (1 - Math.cos(t * 7 * 2 * Math.PI)) / 2; // 7 peaks
+    const env = 0.35 + 0.65 * t;
+    const base = 0.12 + 0.45 * t;
+    return Math.min(1, base + 0.32 * bump * env);
+  };
+  const N = 160;
+  const pts = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const x = pad + t * (W - 2 * pad);
+    const y = H - pad - terrain(t) * (H - 2 * pad);
+    pts.push([x, y]);
+  }
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
+  const area = `${line} L${W - pad} ${H} L${pad} ${H} Z`;
+  const px = pad + progress * (W - 2 * pad);
+  const py = H - pad - terrain(progress) * (H - 2 * pad);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+      <defs>
+        <linearGradient id="hillg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="var(--pine)" stopOpacity="0.20" />
+          <stop offset="1" stopColor="var(--pine)" stopOpacity="0.04" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill="url(#hillg)" />
+      <path d={line} fill="none" stroke="var(--pine)" strokeWidth="2" />
+      <line x1={px} y1={py} x2={px} y2={H} stroke="var(--clay)" strokeWidth="1.5" strokeDasharray="3 3" opacity="0.6" />
+      <circle cx={px} cy={py} r="6" fill="var(--clay)" stroke="#fff" strokeWidth="2" />
+      <g transform={`translate(${W - pad - 2},${H - pad})`}>
+        <Flag size={16} color="var(--clay)" style={{ transform: "translate(-14px,-30px)" }} />
+      </g>
+      <text x={pad} y={H - 4} className="mono" style={{ fontSize: 10, fill: "var(--ink-soft)" }}>start of training</text>
+      <text x={W - pad} y={H - 4} textAnchor="end" className="mono" style={{ fontSize: 10, fill: "var(--clay)" }}>race day</text>
+    </svg>
+  );
+}
+
+function SessionRow({ s }) {
+  return (
+    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "11px 13px", border: "1px solid var(--line)", borderRadius: 11, background: "#fff" }}>
+      <span style={{ flexShrink: 0, marginTop: 1, fontSize: 10, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "#fff", background: TYPE_COLOR[s.tag] || "var(--ink-soft)", padding: "3px 8px", borderRadius: 6 }}>{s.tag}</span>
+      <div style={{ flex: 1 }}>
+        <div>
+          <strong style={{ fontSize: 14.5 }}>{s.title}</strong>
+        </div>
+        <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 3, lineHeight: 1.45 }}>{s.detail}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- plan view ---------------- */
+function PlanView({ done, setDone, currentWeek }) {
+  const [open, setOpen] = useState(currentWeek);
+  const phaseColor = { Base: "var(--pine)", Build: "var(--sky)", Sharpen: "var(--clay)", Taper: "var(--ink-soft)" };
+
+  const toggle = (id) => {
+    const next = { ...done, [id]: !done[id] };
+    setDone(next); saveKey("zhl:done", next);
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <p style={{ fontSize: 13.5, color: "var(--ink-soft)", lineHeight: 1.5, margin: "0 0 4px" }}>
+        Two focused sessions a week across four phases. Tick them off as you go — your progress feeds the climb on the overview.
+      </p>
+      {["Base", "Build", "Sharpen", "Taper"].map((ph) => (
+        <span key={ph} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, marginRight: 14, color: "var(--ink-soft)" }}>
+          <span style={{ width: 9, height: 9, borderRadius: 3, background: phaseColor[ph] }} /> {ph}
+        </span>
+      ))}
+      <div style={{ display: "grid", gap: 8, marginTop: 6 }}>
+        {WEEKS.map((wk) => {
+          const isOpen = open === wk.w;
+          const all = wk.sessions.every((_, i) => done[`${wk.w}-${i}`]);
+          return (
+            <div key={wk.w} className="card" style={{ overflow: "hidden", borderColor: wk.w === currentWeek ? "var(--clay)" : "var(--line)" }}>
+              <button onClick={() => setOpen(isOpen ? 0 : wk.w)}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "13px 15px", border: "none", background: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                <span style={{ width: 4, alignSelf: "stretch", borderRadius: 4, background: phaseColor[wk.phase] }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <strong style={{ fontSize: 15 }}>Week {wk.w}</strong>
+                    {wk.w === currentWeek && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--clay)", letterSpacing: ".05em" }}>NOW</span>}
+                    {wk.w === 21 && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--clay)", letterSpacing: ".05em" }}>RACE</span>}
+                    <span className="mono" style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>{fmtRange(wk.mon, wk.sun)}</span>
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 2 }}>{wk.phase} · {wk.sessions.map((s) => s.title).join(" + ")}</div>
+                </div>
+                {all && <Check size={16} color="var(--pine)" />}
+                <ChevronDown size={18} color="var(--ink-soft)" style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+              </button>
+              {isOpen && (
+                <div style={{ padding: "0 15px 15px", display: "grid", gap: 9 }}>
+                  <p style={{ fontSize: 13, color: "var(--ink-soft)", margin: "0 0 2px", lineHeight: 1.45 }}>{wk.focus}</p>
+                  {wk.sessions.map((s, i) => {
+                    const id = `${wk.w}-${i}`;
+                    return (
+                      <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", padding: "11px 12px", border: "1px solid var(--line)", borderRadius: 10, background: done[id] ? "var(--panel-2)" : "#fff", opacity: done[id] ? 0.7 : 1 }}>
+                        <button onClick={() => toggle(id)} aria-label="toggle done"
+                          style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1.5px solid ${done[id] ? "var(--pine)" : "var(--line)"}`, background: done[id] ? "var(--pine)" : "#fff", cursor: "pointer", display: "grid", placeItems: "center", marginTop: 1 }}>
+                          {done[id] && <Check size={14} color="#fff" />}
+                        </button>
+                        <div style={{ flex: 1 }}>
+                          <div>
+                            <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: TYPE_COLOR[s.tag] }}>{s.tag}</span> <strong style={{ fontSize: 14.5, textDecoration: done[id] ? "line-through" : "none" }}>{s.title}</strong>
+                          </div>
+                          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 3, lineHeight: 1.45 }}>{s.detail}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- pace view ---------------- */
+function PaceView() {
+  const [pace, setPace] = useState(GOAL_PACE);
+  const finish = pace * GOAL_KM;
+  const splits = [3, 6, 9, 12, 15].map((k) => ({ k, t: pace * k }));
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div className="card" style={{ padding: 18 }}>
+        <div className="eyebrow">Pace calculator · 15 km</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14, margin: "12px 0 4px", flexWrap: "wrap" }}>
+          <div className="mono" style={{ fontSize: 40, fontWeight: 700, color: "var(--clay)" }}>{secToPace(pace)}</div>
+          <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>/ km →</span>
+          <div className="mono" style={{ fontSize: 30, fontWeight: 700 }}>{secToClock(finish)}</div>
+          <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>finish</span>
+        </div>
+        <input type="range" min={255} max={390} step={1} value={pace} onChange={(e) => setPace(+e.target.value)}
+          style={{ width: "100%", accentColor: "var(--clay)", marginTop: 10 }} />
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }} className="mono">
+          <span style={{ color: "var(--ink-soft)" }}>4:15 (fast)</span>
+          <button onClick={() => setPace(GOAL_PACE)} style={{ ...inlineLink, fontSize: 12 }}>reset to goal 6:00</button>
+          <span style={{ color: "var(--ink-soft)" }}>6:30 (relaxed)</span>
+        </div>
+        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 8 }}>
+          {splits.map((s) => (
+            <div key={s.k} style={{ textAlign: "center", padding: "9px 4px", background: s.k === 15 ? "var(--ink)" : "#fff", border: "1px solid var(--line)", borderRadius: 9 }}>
+              <div className="mono" style={{ fontSize: 11, color: s.k === 15 ? "#9fb0c9" : "var(--ink-soft)" }}>{s.k} km</div>
+              <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: s.k === 15 ? "#fff" : "var(--ink)" }}>{secToClock(s.t)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 18 }}>
+        <div className="eyebrow">Your training paces</div>
+        <p style={{ fontSize: 12.5, color: "var(--ink-soft)", margin: "8px 0 12px", lineHeight: 1.5 }}>
+          Calibrated to your 18 June 10k (avg 6:51/km). Train at these for now — you'll get faster, and I'll nudge them down as more <span className="mono">.fit</span> files come in.
+        </p>
+        <div style={{ display: "grid", gap: 8 }}>
+          {PACES.map((p) => (
+            <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 10, background: "#fff" }}>
+              <span style={{ width: 8, height: 28, borderRadius: 4, background: p.color, flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <strong style={{ fontSize: 14 }}>{p.label}</strong>
+                <div style={{ fontSize: 12.5, color: "var(--ink-soft)", lineHeight: 1.4 }}>{p.note}</div>
+              </div>
+              <span className="mono" style={{ fontSize: 15, fontWeight: 700, whiteSpace: "nowrap" }}>{p.range}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- run log ---------------- */
+const RUN_TYPES = ["Easy", "Long", "Tempo", "Intervals", "Hills", "Goal pace", "Race", "Social"];
+function LogView({ runs, setRuns, loaded }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [form, setForm] = useState({ date: today, type: "Easy", distance: "", time: "", feel: 3, notes: "" });
+  const [metric, setMetric] = useState("pace");
+  const [fitMsg, setFitMsg] = useState("");
+  const importFit = (file) => {
+    if (!file) return;
+    setFitMsg("Reading " + file.name + " \u2026");
+    const reader = new FileReader();
+    reader.onerror = () => setFitMsg("Couldn't read that file.");
+    reader.onload = () => {
+      try {
+        const FP = (typeof FitParser === "function") ? FitParser : (FitParser && FitParser.default);
+        if (!FP) { setFitMsg("The .fit reader didn't load \u2014 paste the file into the chat with Claude instead."); return; }
+        const fp = new FP({ force: true, speedUnit: "km/h", lengthUnit: "km", temperatureUnit: "celsius", elapsedRecordField: true, mode: "list" });
+        fp.parse(reader.result, (err, data) => {
+          if (err || !data) { setFitMsg("Couldn't read that file \u2014 you can paste it into the chat with Claude instead."); return; }
+          const recs = (data.records || []).filter((r) => r && r.distance != null && r.timestamp);
+          const sess = (data.sessions && data.sessions[0]) || {};
+          const distKm = sess.total_distance != null ? sess.total_distance : (recs.length ? recs[recs.length - 1].distance : 0);
+          const timeSec = sess.total_timer_time != null ? sess.total_timer_time
+            : (sess.total_elapsed_time != null ? sess.total_elapsed_time
+            : (recs.length ? (new Date(recs[recs.length - 1].timestamp) - new Date(recs[0].timestamp)) / 1000 : 0));
+          const when = sess.start_time ? new Date(sess.start_time) : (recs.length ? new Date(recs[0].timestamp) : new Date());
+          if (!distKm || !timeSec) { setFitMsg("That file had no distance/time I could read \u2014 paste it into the chat with Claude instead."); return; }
+          setForm((f) => ({ ...f, date: when.toISOString().slice(0, 10), distance: Number(distKm).toFixed(2), time: secToClock(timeSec) }));
+          setFitMsg("Loaded " + Number(distKm).toFixed(2) + " km in " + secToClock(timeSec) + " (" + secToPace(timeSec / distKm) + "/km). Pick the type and how it felt, then Log run.");
+        });
+      } catch (e) { setFitMsg("Couldn't parse that file \u2014 paste it into the chat with Claude instead."); }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const add = () => {
+    const distance = parseFloat(form.distance);
+    const time = parseTime(form.time);
+    if (!distance || distance <= 0 || !time) return;
+    const entry = { id: Date.now(), date: form.date, type: form.type, distance, time, feel: form.feel, notes: form.notes.trim() };
+    const next = [...runs, entry].sort((a, b) => a.date.localeCompare(b.date));
+    setRuns(next); saveKey("zhl:runs", next);
+    setForm({ date: today, type: "Easy", distance: "", time: "", feel: 3, notes: "" });
+  };
+  const del = (id) => { const next = runs.filter((r) => r.id !== id); setRuns(next); saveKey("zhl:runs", next); };
+
+  const counted = runs.filter((r) => r.type !== "Social");
+  const chartData = counted.filter((r) => r.distance > 0 && r.time > 0).map((r) => ({
+    date: new Date(r.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+    pace: Math.round(r.time / r.distance), distance: +r.distance.toFixed(1),
+  }));
+  const sorted = [...runs].sort((a, b) => b.date.localeCompare(a.date));
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div className="card" style={{ padding: 18 }}>
+        <div className="eyebrow">Log a run</div>
+        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <label style={{ ...primaryBtn, background: "var(--sky)", cursor: "pointer" }}>
+            <Upload size={16} /> Import .fit file
+            <input type="file" accept=".fit" style={{ display: "none" }} onChange={(e) => importFit(e.target.files && e.target.files[0])} />
+          </label>
+          {fitMsg && <span style={{ fontSize: 12.5, color: "var(--ink-soft)", flex: 1, minWidth: 180, lineHeight: 1.4 }}>{fitMsg}</span>}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginTop: 12 }}>
+          <label style={lbl}>Date<input type="date" className="field" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></label>
+          <label style={lbl}>Type
+            <select className="field" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+              {RUN_TYPES.map((t) => <option key={t}>{t}</option>)}
+            </select>
+          </label>
+          <label style={lbl}>Distance (km)<input className="field mono" inputMode="decimal" placeholder="10.0" value={form.distance} onChange={(e) => setForm({ ...form, distance: e.target.value })} /></label>
+          <label style={lbl}>Time (mm:ss)<input className="field mono" placeholder="52:30" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} /></label>
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <div style={{ ...lbl, marginBottom: 6 }}>How did it feel?</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {["Rough", "Hard", "OK", "Good", "Flying"].map((f, i) => (
+              <button key={f} onClick={() => setForm({ ...form, feel: i + 1 })}
+                style={{ flex: 1, minWidth: 64, padding: "8px 4px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 600,
+                  border: `1.5px solid ${form.feel === i + 1 ? "var(--sky)" : "var(--line)"}`,
+                  background: form.feel === i + 1 ? "var(--sky)" : "#fff", color: form.feel === i + 1 ? "#fff" : "var(--ink-soft)" }}>{f}</button>
+            ))}
+          </div>
+        </div>
+        <label style={{ ...lbl, marginTop: 10, display: "block" }}>Notes
+          <textarea className="field" rows={2} placeholder="Weather, how the legs felt, anything that affected the run…" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} style={{ resize: "vertical" }} />
+        </label>
+        {form.distance && parseTime(form.time) > 0 && (
+          <div className="mono" style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 8 }}>
+            = {secToPace(parseTime(form.time) / parseFloat(form.distance))} / km
+          </div>
+        )}
+        <button onClick={add} disabled={!form.distance || !parseTime(form.time)}
+          style={{ ...primaryBtn, marginTop: 12, opacity: (!form.distance || !parseTime(form.time)) ? 0.5 : 1 }}>
+          <Plus size={16} /> Log run
+        </button>
+      </div>
+
+      {chartData.length >= 2 && (
+        <div className="card" style={{ padding: "18px 12px 14px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "0 6px", alignItems: "center" }}>
+            <div className="eyebrow">Progress</div>
+            <div style={{ display: "flex", gap: 4 }}>
+              {[["pace", "Pace"], ["distance", "Distance"]].map(([k, l]) => (
+                <button key={k} onClick={() => setMetric(k)} style={{ padding: "5px 11px", borderRadius: 7, border: "1px solid var(--line)", cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, background: metric === k ? "var(--ink)" : "#fff", color: metric === k ? "#fff" : "var(--ink-soft)" }}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{ height: 240, marginTop: 12 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              {metric === "pace" ? (
+                <LineChart data={chartData} margin={{ top: 5, right: 12, left: -8, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" tickLine={false} axisLine={{ stroke: "var(--line)" }} />
+                  <YAxis tickFormatter={secToPace} domain={[(min) => min - 15, (max) => max + 15]} tickLine={false} axisLine={false} width={48} />
+                  <Tooltip formatter={(v) => [secToPace(v) + " /km", "Pace"]} contentStyle={tooltipStyle} />
+                  <ReferenceLine y={GOAL_PACE} stroke="var(--clay)" strokeDasharray="5 4" label={{ value: "goal 6:00", fill: "var(--clay)", fontSize: 11, position: "insideTopRight" }} />
+                  <Line type="monotone" dataKey="pace" stroke="var(--sky)" strokeWidth={2.5} dot={{ r: 3, fill: "var(--sky)" }} />
+                </LineChart>
+              ) : (
+                <AreaChart data={chartData} margin={{ top: 5, right: 12, left: -12, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" tickLine={false} axisLine={{ stroke: "var(--line)" }} />
+                  <YAxis tickLine={false} axisLine={false} width={34} />
+                  <Tooltip formatter={(v) => [v + " km", "Distance"]} contentStyle={tooltipStyle} />
+                  <ReferenceLine y={GOAL_KM} stroke="var(--clay)" strokeDasharray="5 4" label={{ value: "race 15", fill: "var(--clay)", fontSize: 11, position: "insideTopRight" }} />
+                  <Area type="monotone" dataKey="distance" stroke="var(--pine)" strokeWidth={2.5} fill="var(--pine)" fillOpacity={0.12} dot={{ r: 3, fill: "var(--pine)" }} />
+                </AreaChart>
+              )}
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      <div className="card" style={{ padding: 18 }}>
+        <div className="eyebrow">History {runs.length > 0 && `· ${runs.length}`}</div>
+        {!loaded ? <p style={{ color: "var(--ink-soft)", fontSize: 14, marginTop: 10 }}>Loading…</p>
+          : sorted.length === 0 ? <p style={{ color: "var(--ink-soft)", fontSize: 14, marginTop: 10, lineHeight: 1.5 }}>Nothing logged yet. Add your first run above, or hand me a Strava <span className="mono">.fit</span> file in the chat and I'll fill it in.</p>
+          : (
+            <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+              {sorted.map((r) => (
+                <div key={r.id} style={{ display: "flex", gap: 12, alignItems: "center", padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 10, background: "#fff" }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "#fff", background: TYPE_COLOR[r.type] || "var(--ink-soft)", padding: "3px 7px", borderRadius: 6, flexShrink: 0 }}>{r.type}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+                      <span className="mono" style={{ fontSize: 14, fontWeight: 700 }}>{r.distance.toFixed(1)} km</span>
+                      <span className="mono" style={{ fontSize: 13, color: "var(--ink-soft)" }}>{secToClock(r.time)}</span>
+                      <span className="mono" style={{ fontSize: 13, color: r.type === "Social" ? "var(--ink-soft)" : "var(--clay)", fontWeight: 700 }}>{secToPace(r.time / r.distance)}/km</span>
+                      <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{new Date(r.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                    </div>
+                    {r.notes && <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 2, lineHeight: 1.4 }}>{r.notes}</div>}
+                  </div>
+                  <button onClick={() => del(r.id)} aria-label="delete" style={{ border: "none", background: "none", cursor: "pointer", color: "var(--ink-soft)", padding: 4, flexShrink: 0 }}><Trash2 size={15} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- fuel & recovery ---------------- */
+function FuelView({ checkins, setCheckins, loaded }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [c, setC] = useState({ date: today, eating: "", alcohol: "0", energy: 3, notes: "" });
+
+  const add = () => {
+    const entry = { id: Date.now(), ...c };
+    const next = [...checkins, entry].sort((a, b) => b.date.localeCompare(a.date));
+    setCheckins(next); saveKey("zhl:checkins", next);
+    setC({ date: today, eating: "", alcohol: "0", energy: 3, notes: "" });
+  };
+  const del = (id) => { const next = checkins.filter((x) => x.id !== id); setCheckins(next); saveKey("zhl:checkins", next); };
+
+  const blocks = [
+    { icon: Footprints, title: "Train to get faster, fuel to train well", color: "var(--clay)",
+      body: "At 175 cm and ~72 kg you're already at a healthy weight, so the biggest lever for hitting 6:00/km is the training itself — not cutting body fat. Under-eating would mostly cost you good sessions and slow recovery. Any leaning-out tends to follow on its own from consistent running plus cleaner everyday food, no deficit required. So this section is about fuelling performance, not restriction." },
+    { icon: Utensils, title: "Everyday plate", color: "var(--pine)",
+      body: "Build meals around whole foods: a protein source, plenty of vegetables, and real carbohydrates (rice, potatoes, oats, bread, pasta) — carbs are fuel, not the enemy. Keep the swaps simple where you currently eat unhealthy: fruit, yoghurt or nuts instead of sugary snacks; water or sparkling water instead of soft drinks." },
+    { icon: Timer, title: "Around your runs", color: "var(--sky)",
+      body: "Before a longer or quality run, have some easy carbs 1–2 hours ahead. After it, get carbs + protein in within the hour to recover. For anything under ~75–90 minutes you don't need gels — water is enough. Practise your race-morning breakfast before your long runs so nothing's a surprise on 15 November." },
+    { icon: Wine, title: "Alcohol — your single biggest win", color: "var(--warn)",
+      body: "A drink now and then is fine. The one change that'll genuinely move the needle: skip alcohol the night before — ideally the 1–2 days before — your quality and long runs. It wrecks sleep quality, dehydrates you, and flattens the next day's session. Protect the nights before your two focused runs and you'll feel the difference fast." },
+    { icon: Flag, title: "Race week", color: "var(--ink)",
+      body: "Eat a little more carbohydrate over the final 2–3 days, stay well hydrated, and don't try anything new on race day — same breakfast, same kit, same shoes you've trained in." },
+  ];
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div style={{ display: "grid", gap: 10 }}>
+        {blocks.map((b, i) => (
+          <div key={i} className="card" style={{ padding: 16, display: "flex", gap: 13 }}>
+            <div style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 10, background: b.color, display: "grid", placeItems: "center" }}><b.icon size={19} color="#fff" /></div>
+            <div>
+              <strong style={{ fontSize: 15 }}>{b.title}</strong>
+              <p style={{ fontSize: 13.5, color: "var(--ink-soft)", margin: "5px 0 0", lineHeight: 1.55 }}>{b.body}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="card" style={{ padding: 18 }}>
+        <div className="eyebrow">Weekly check-in</div>
+        <p style={{ fontSize: 13, color: "var(--ink-soft)", margin: "8px 0 14px", lineHeight: 1.5 }}>
+          You asked about logging what you eat — here's the version I'd actually recommend. Keep it loose and about energy, not calories or policing.
+          Jot down roughly how the week went and how your runs felt, then paste it into the chat and I'll give you feedback focused on fuelling and consistency.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10 }}>
+          <label style={lbl}>Week ending<input type="date" className="field" value={c.date} onChange={(e) => setC({ ...c, date: e.target.value })} /></label>
+          <label style={lbl}>Alcohol (drinks)<input className="field mono" inputMode="numeric" value={c.alcohol} onChange={(e) => setC({ ...c, alcohol: e.target.value })} /></label>
+        </div>
+        <label style={{ ...lbl, marginTop: 10, display: "block" }}>How I ate this week
+          <textarea className="field" rows={2} placeholder="e.g. mostly home-cooked, a few takeaways, snacky on Wed…" value={c.eating} onChange={(e) => setC({ ...c, eating: e.target.value })} style={{ resize: "vertical" }} />
+        </label>
+        <div style={{ marginTop: 10 }}>
+          <div style={{ ...lbl, marginBottom: 6 }}>Energy on your runs</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {["Flat", "Low", "Fine", "Good", "Great"].map((f, i) => (
+              <button key={f} onClick={() => setC({ ...c, energy: i + 1 })}
+                style={{ flex: 1, padding: "8px 4px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 600,
+                  border: `1.5px solid ${c.energy === i + 1 ? "var(--pine)" : "var(--line)"}`,
+                  background: c.energy === i + 1 ? "var(--pine)" : "#fff", color: c.energy === i + 1 ? "#fff" : "var(--ink-soft)" }}>{f}</button>
+            ))}
+          </div>
+        </div>
+        <label style={{ ...lbl, marginTop: 10, display: "block" }}>Sleep / notes
+          <textarea className="field" rows={2} placeholder="Anything worth flagging…" value={c.notes} onChange={(e) => setC({ ...c, notes: e.target.value })} style={{ resize: "vertical" }} />
+        </label>
+        <button onClick={add} disabled={!c.eating.trim()} style={{ ...primaryBtn, marginTop: 12, opacity: c.eating.trim() ? 1 : 0.5 }}><Plus size={16} /> Save check-in</button>
+      </div>
+
+      {loaded && checkins.length > 0 && (
+        <div className="card" style={{ padding: 18 }}>
+          <div className="eyebrow">Past check-ins</div>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            {checkins.map((x) => (
+              <div key={x.id} style={{ display: "flex", gap: 12, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 10, background: "#fff" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+                    <span className="mono" style={{ fontSize: 12.5, fontWeight: 700 }}>{new Date(x.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                    <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{["Flat", "Low", "Fine", "Good", "Great"][x.energy - 1]} energy · {x.alcohol} drink{x.alcohol === "1" ? "" : "s"}</span>
+                  </div>
+                  {x.eating && <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 3, lineHeight: 1.4 }}>{x.eating}</div>}
+                </div>
+                <button onClick={() => del(x.id)} aria-label="delete" style={{ border: "none", background: "none", cursor: "pointer", color: "var(--ink-soft)", padding: 4 }}><Trash2 size={15} /></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- course ---------------- */
+function CourseView() {
+  const path = COURSE.map((p, i) => `${i ? "L" : "M"}${p[0]} ${p[1]}`).join(" ");
+  const tips = [
+    ["Don't bank time early", "The opening kilometres feel easy. Hold 6:00, no faster — every second spent too fast up front is paid back double later."],
+    ["Run the hills by effort", "On the climbs, let your pace slip 15–25 s/km and keep the effort even. Fighting to hold 6:00 uphill is how races fall apart."],
+    ["Cash in on the descents", "This course is famous as the world's fastest 15 km because of its long downhill stretch — relax, lengthen your stride and let gravity give the time back."],
+    ["Aim for even effort, not even pace", "Some kilometres will read 6:20, others 5:40. If the effort stays steady, the average lands on 6:00."],
+  ];
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div className="card" style={{ padding: 18 }}>
+        <div className="eyebrow">The route · 15.08 km loop</div>
+        <p style={{ fontSize: 13.5, color: "var(--ink-soft)", margin: "8px 0 12px", lineHeight: 1.5 }}>
+          Traced from your GPX. It comes back on itself — a true loop through the wooded hills around Nijmegen and Berg en Dal.
+        </p>
+        <div style={{ background: "var(--ink)", borderRadius: 12, padding: 16 }}>
+          <svg viewBox="-6 -6 107 112" style={{ width: "100%", height: "auto", display: "block" }}>
+            {[14, 28, 42].map((r, i) => (
+              <circle key={i} cx="50" cy="52" r={r} fill="none" stroke="#33476a" strokeWidth="0.6" opacity={0.5 - i * 0.1} />
+            ))}
+            <path d={path} fill="none" stroke="#E6A06b" strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" />
+            <circle cx={COURSE[0][0]} cy={COURSE[0][1]} r="3.2" fill="var(--pine)" stroke="#fff" strokeWidth="1.2" />
+            <text x={COURSE[0][0] + 4} y={COURSE[0][1] + 1} className="mono" style={{ fontSize: 5, fill: "#fff" }}>start / finish</text>
+          </svg>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 18 }}>
+        <div className="eyebrow">Race-day pacing</div>
+        <p style={{ fontSize: 13.5, color: "var(--ink-soft)", margin: "8px 0 14px", lineHeight: 1.5 }}>
+          The "Seven Hills" name sounds brutal, but the course holds the world records for the 15 km — it's rolling and genuinely fast if you pace it right.
+        </p>
+        <div style={{ display: "grid", gap: 9 }}>
+          {tips.map((t, i) => (
+            <div key={i} style={{ display: "flex", gap: 12, padding: "11px 13px", border: "1px solid var(--line)", borderRadius: 10, background: "#fff" }}>
+              <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--clay)", flexShrink: 0 }}>{pad(i + 1)}</span>
+              <div>
+                <strong style={{ fontSize: 14 }}>{t[0]}</strong>
+                <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 2, lineHeight: 1.45 }}>{t[1]}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- shared styles ---------------- */
+const lbl = { fontSize: 12, fontWeight: 600, color: "var(--ink-soft)", display: "flex", flexDirection: "column", gap: 5 };
+const primaryBtn = { display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 18px", background: "var(--ink)", color: "#fff", border: "none", borderRadius: 9, cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 600 };
+const linkBtn = { background: "none", border: "none", color: "var(--sky)", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, padding: 0 };
+const inlineLink = { background: "none", border: "none", color: "var(--sky)", cursor: "pointer", fontFamily: "inherit", fontWeight: 600, padding: 0, fontSize: "inherit", textDecoration: "underline" };
+const tooltipStyle = { background: "var(--ink)", border: "none", borderRadius: 8, color: "#fff", fontSize: 12, fontFamily: "'Space Mono',monospace" };
+
+createRoot(document.getElementById("root")).render(<App />);
+
+</script>
+</body>
+</html>
